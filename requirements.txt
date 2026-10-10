@@ -6,3 +6,9 @@ matplotlib
 rustworkx
 scipy
 jupyter
+
+# Added for the Quantum Exam Scheduler project
+networkx
+pandas
+streamlit
+pytest
