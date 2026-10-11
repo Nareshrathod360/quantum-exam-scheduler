@@ -1,11 +1,13 @@
 """QUBO formulation and energy evaluation module for exam scheduling."""
 
 from dataclasses import dataclass
+import itertools
 from typing import List, Optional, Sequence
 import numpy as np
 
 from exam_scheduler.conflict_graph import build_conflict_graph, conflict_edges
 from exam_scheduler.data import ExamInstance
+from exam_scheduler.validator import validate_schedule
 
 
 @dataclass(frozen=True)
@@ -179,3 +181,29 @@ def bits_from_assignment(
 def bitstring_to_bits(bitstring: str) -> List[int]:
     """Convert Qiskit little-endian bitstring to bit vector (rightmost char = qubit 0)."""
     return [int(ch) for ch in reversed(bitstring.strip())]
+
+
+def valid_state_mask(instance: ExamInstance, n_slots: int) -> np.ndarray:
+    """Compute boolean mask of length 2^N where mask[s] is True iff state s is a valid schedule.
+
+    Enumerates the K^n one-hot assignments, validates each, and maps valid schedules
+    to their computational basis state indices via index = sum(bit_q << q).
+    """
+    N = instance.n_courses * n_slots
+    if N > 20:
+        raise ValueError(
+            f"N={N} qubits exceeds 20 (too large for 2^N state mask allocation)."
+        )
+
+    mask = np.zeros(1 << N, dtype=bool)
+    model = build_qubo(instance, n_slots)
+
+    for a in itertools.product(range(n_slots), repeat=instance.n_courses):
+        val = validate_schedule(instance, list(a), n_slots)
+        if val.is_valid:
+            bits = bits_from_assignment(model, list(a))
+            idx = sum(bit << q for q, bit in enumerate(bits))
+            mask[idx] = True
+
+    return mask
+

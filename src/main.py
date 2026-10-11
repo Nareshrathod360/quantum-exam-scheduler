@@ -14,10 +14,20 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 import itertools
 import numpy as np
 
-from exam_scheduler.classical import exact_schedule, greedy_schedule, min_slots_exact
+from exam_scheduler.classical import (
+    exact_schedule,
+    greedy_schedule,
+    min_slots_exact,
+    random_sampling_schedule,
+)
 from exam_scheduler.conflict_graph import (
     build_conflict_graph,
     clique_lower_bound,
@@ -26,6 +36,7 @@ from exam_scheduler.conflict_graph import (
 )
 from exam_scheduler.data import load_instance, sample_instance, save_instance
 from exam_scheduler.ising import ising_energies_all, qubo_to_ising
+from exam_scheduler.qaoa_solver import qaoa_schedule
 from exam_scheduler.qubo import build_qubo, decode_bits, qubo_energies_all
 from exam_scheduler.validator import validate_schedule
 
@@ -113,6 +124,26 @@ def main() -> None:
         action="store_true",
         help="Load instance from CSV files in data folder",
     )
+
+    qaoa_cmd = subparsers.add_parser(
+        "qaoa", help="Solve exam scheduling using the QAOA variational quantum algorithm"
+    )
+    qaoa_cmd.add_argument("--slots", type=int, default=3, help="Slots budget")
+    qaoa_cmd.add_argument("--reps", type=int, default=1, help="QAOA circuit layers p")
+    qaoa_cmd.add_argument("--shots", type=int, default=4096, help="Measurement shots")
+    qaoa_cmd.add_argument("--restarts", type=int, default=3, help="Optimization restarts")
+    qaoa_cmd.add_argument("--maxiter", type=int, default=150, help="COBYLA max iterations")
+    qaoa_cmd.add_argument("--penalty", type=float, default=1.5, help="Constraint penalty multiplier")
+    qaoa_cmd.add_argument("--seed", type=int, default=42, help="Random seed")
+    qaoa_cmd.add_argument("--from-csv", action="store_true", help="Load instance from CSV")
+
+    random_cmd = subparsers.add_parser(
+        "random-baseline", help="Solve exam scheduling via uniform random binary sampling"
+    )
+    random_cmd.add_argument("--slots", type=int, default=3, help="Slots budget")
+    random_cmd.add_argument("--shots", type=int, default=4096, help="Random samples count")
+    random_cmd.add_argument("--seed", type=int, default=42, help="Random seed")
+    random_cmd.add_argument("--from-csv", action="store_true", help="Load instance from CSV")
 
     args = parser.parse_args()
 
@@ -300,6 +331,109 @@ def main() -> None:
         i_energies = ising_energies_all(ising)
         matches = bool(np.allclose(i_energies, q_energies))
         print(f"ising matches qubo on all 2^N states: {matches}")
+
+    elif args.command == "qaoa":
+        if args.from_csv:
+            data_dir = REPO_ROOT / "data"
+            courses_csv = data_dir / "sample_courses.csv"
+            enrollments_csv = data_dir / "sample_enrollments.csv"
+            inst = load_instance(courses_csv, enrollments_csv)
+        else:
+            inst = sample_instance()
+
+        print("training ... this can take up to a minute")
+        outcome = qaoa_schedule(
+            inst,
+            n_slots=args.slots,
+            reps=args.reps,
+            penalty=args.penalty,
+            shots=args.shots,
+            n_restarts=args.restarts,
+            maxiter=args.maxiter,
+            seed=args.seed,
+        )
+
+        res = outcome.result
+        param_names_str = ", ".join(outcome.param_names)
+
+        print(
+            f"method: {res.method} | slots budget: {res.n_slots} | "
+            f"qubits: {outcome.circuit_stats['num_qubits']} | seed: {outcome.seed}"
+        )
+        print(
+            f"circuit (transpiled to rz/sx/x/cx): depth {outcome.circuit_stats['depth']} | "
+            f"cx gates {outcome.circuit_stats['cx']} | "
+            f"parameters {outcome.circuit_stats['num_parameters']} (names: {param_names_str})"
+        )
+
+        for r_info in outcome.restarts:
+            print(
+                f"restart {r_info['restart']}: <H_C> = {r_info['final_energy']:.4f} | "
+                f"evaluations: {r_info['n_evaluations']}"
+            )
+
+        print(f"best restart: {outcome.best_restart} | <H_C> = {outcome.final_energy:.4f}")
+        print(
+            f"exact feasible probability: {outcome.exact_feasible_probability * 100:.4f}% | "
+            f"random-guess probability: {outcome.random_guess_probability * 100:.4f}%"
+        )
+        print(
+            f"shots: {outcome.shots} | valid shots: {outcome.n_valid_shots} | "
+            f"feasibility yield: {outcome.feasibility_yield * 100:.2f}%"
+        )
+        print(f"most frequent bitstring valid: {outcome.top_bitstring_valid}")
+
+        if res.is_valid and res.assignment is not None:
+            for c in range(inst.n_courses):
+                code = inst.course_codes[c]
+                slot_val = res.assignment[c]
+                print(f"{code} -> slot {slot_val}")
+            print(
+                f"slots used: {res.slots_used} | conflicts: {res.n_conflicts} | "
+                f"affected students: {res.affected_students} | valid: {res.is_valid}"
+            )
+            print(f"objective: {res.objective:.4f} | runtime: {res.runtime_s:.4f} s")
+        else:
+            print("no valid schedule found in the sampled shots")
+
+    elif args.command == "random-baseline":
+        if args.from_csv:
+            data_dir = REPO_ROOT / "data"
+            courses_csv = data_dir / "sample_courses.csv"
+            enrollments_csv = data_dir / "sample_enrollments.csv"
+            inst = load_instance(courses_csv, enrollments_csv)
+        else:
+            inst = sample_instance()
+
+        N = inst.n_courses * args.slots
+        res = random_sampling_schedule(
+            inst,
+            n_slots=args.slots,
+            shots=args.shots,
+            seed=args.seed,
+        )
+
+        print(
+            f"method: random-sampling | slots budget: {res.n_slots} | "
+            f"qubits: {N} | seed: {args.seed}"
+        )
+        print(
+            f"shots: {res.extra['shots']} | valid shots: {res.extra['n_valid_shots']} | "
+            f"feasibility yield: {res.extra['feasibility_yield'] * 100:.2f}%"
+        )
+
+        if res.is_valid and res.assignment is not None:
+            for c in range(inst.n_courses):
+                code = inst.course_codes[c]
+                slot_val = res.assignment[c]
+                print(f"{code} -> slot {slot_val}")
+            print(
+                f"slots used: {res.slots_used} | conflicts: {res.n_conflicts} | "
+                f"affected students: {res.affected_students} | valid: {res.is_valid}"
+            )
+            print(f"objective: {res.objective:.4f} | runtime: {res.runtime_s:.4f} s")
+        else:
+            print(f"no valid schedule found in {args.shots} random samples")
 
 
 if __name__ == "__main__":

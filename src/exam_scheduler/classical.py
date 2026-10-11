@@ -2,10 +2,13 @@ import itertools
 import time
 from typing import Dict, List, Optional
 import networkx as nx
+import numpy as np
 
 from exam_scheduler.conflict_graph import build_conflict_graph, conflict_edges
-from exam_scheduler.data import ExamInstance
+from exam_scheduler.data import DEFAULT_SEED, ExamInstance
+from exam_scheduler.qubo import build_qubo, decode_bits, valid_state_mask
 from exam_scheduler.results import SolverResult, make_result
+from exam_scheduler.validator import schedule_objective
 
 ALLOWED_STRATEGIES = {"largest_first", "DSATUR", "smallest_last"}
 
@@ -153,4 +156,75 @@ def min_slots_exact(
                 return k
 
     raise ValueError(f"No valid schedule exists up to k_max={k_max}.")
+
+
+def random_sampling_schedule(
+    instance: ExamInstance,
+    n_slots: int,
+    shots: int = 4096,
+    seed: int = DEFAULT_SEED,
+) -> SolverResult:
+    """Solve exam scheduling by uniform random binary sampling across 2^N states."""
+    t0 = time.perf_counter()
+    N = instance.n_courses * n_slots
+
+    rng = np.random.default_rng(seed)
+    bits = rng.integers(0, 2, size=(shots, N))
+
+    # Evaluate validity using valid_state_mask
+    mask = valid_state_mask(instance, n_slots)
+    powers = 2 ** np.arange(N, dtype=np.int64)
+    state_indices = bits @ powers
+
+    valid_flags = mask[state_indices]
+    n_valid_shots = int(valid_flags.sum())
+    feasibility_yield = float(n_valid_shots / shots)
+
+    model = build_qubo(instance, n_slots)
+    runtime_s = time.perf_counter() - t0
+
+    if n_valid_shots == 0:
+        return make_result(
+            method="random-sampling",
+            instance=instance,
+            assignment=None,
+            n_slots=n_slots,
+            runtime_s=runtime_s,
+            extra={
+                "shots": shots,
+                "n_valid_shots": 0,
+                "feasibility_yield": 0.0,
+                "seed": seed,
+            },
+        )
+
+    # Among valid samples choose lowest objective; break ties by lexicographically smallest assignment
+    valid_bit_vectors = bits[valid_flags]
+    best_assignment = None
+    best_obj = float("inf")
+
+    for b in valid_bit_vectors:
+        assignment = decode_bits(model, b)
+        obj = schedule_objective(instance, assignment)
+        if (obj < best_obj - 1e-9) or (
+            abs(obj - best_obj) <= 1e-9
+            and (best_assignment is None or assignment < best_assignment)
+        ):
+            best_obj = obj
+            best_assignment = assignment
+
+    return make_result(
+        method="random-sampling",
+        instance=instance,
+        assignment=best_assignment,
+        n_slots=n_slots,
+        runtime_s=runtime_s,
+        extra={
+            "shots": shots,
+            "n_valid_shots": n_valid_shots,
+            "feasibility_yield": feasibility_yield,
+            "seed": seed,
+        },
+    )
+
 
