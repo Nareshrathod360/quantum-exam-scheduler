@@ -34,8 +34,10 @@ from exam_scheduler.conflict_graph import (
     conflict_edges,
     draw_conflict_graph,
 )
+from exam_scheduler.benchmark import BenchmarkConfig, run_benchmark
 from exam_scheduler.data import load_instance, sample_instance, save_instance
 from exam_scheduler.ising import ising_energies_all, qubo_to_ising
+from exam_scheduler.plots import generate_all_plots
 from exam_scheduler.qaoa_solver import qaoa_schedule
 from exam_scheduler.qubo import build_qubo, decode_bits, qubo_energies_all
 from exam_scheduler.validator import validate_schedule
@@ -144,6 +146,22 @@ def main() -> None:
     random_cmd.add_argument("--shots", type=int, default=4096, help="Random samples count")
     random_cmd.add_argument("--seed", type=int, default=42, help="Random seed")
     random_cmd.add_argument("--from-csv", action="store_true", help="Load instance from CSV")
+
+    bench_cmd = subparsers.add_parser(
+        "benchmark", help="Run comprehensive classical vs quantum benchmark experiments"
+    )
+    bench_cmd.add_argument("--out", type=str, default="results", help="Output directory")
+    bench_cmd.add_argument("--quick", action="store_true", help="Run fast minimal test configuration")
+    bench_cmd.add_argument("--resume", action="store_true", help="Resume previous benchmark runs without re-running")
+    bench_cmd.add_argument("--skip-p2", action="store_true", help="Skip QAOA p=2 experiments")
+    bench_cmd.add_argument("--random-seeds", type=int, default=None, help="Number of random sampling seeds")
+    bench_cmd.add_argument("--p1-seeds", type=int, default=None, help="Number of QAOA p=1 seeds")
+    bench_cmd.add_argument("--p2-seeds", type=int, default=None, help="Number of QAOA p=2 seeds")
+    bench_cmd.add_argument("--penalty-seeds", type=int, default=None, help="Number of seeds per penalty")
+    bench_cmd.add_argument("--scaling-seeds", type=int, default=None, help="Number of seeds per scaling size")
+    bench_cmd.add_argument("--shots", type=int, default=None, help="Number of measurement shots")
+    bench_cmd.add_argument("--restarts", type=int, default=None, help="Number of optimizer restarts")
+    bench_cmd.add_argument("--maxiter", type=int, default=None, help="Optimizer max iterations")
 
     args = parser.parse_args()
 
@@ -434,6 +452,49 @@ def main() -> None:
             print(f"objective: {res.objective:.4f} | runtime: {res.runtime_s:.4f} s")
         else:
             print(f"no valid schedule found in {args.shots} random samples")
+
+    elif args.command == "benchmark":
+        out_dir = Path(args.out)
+        if not out_dir.is_absolute():
+            out_dir = REPO_ROOT / out_dir
+
+        if args.quick:
+            config = BenchmarkConfig.quick()
+        else:
+            config = BenchmarkConfig()
+
+        if args.skip_p2:
+            config.include_p2 = False
+            config.p2_seeds = 0
+
+        if args.random_seeds is not None:
+            config.random_seeds = args.random_seeds
+        if args.p1_seeds is not None:
+            config.p1_seeds = args.p1_seeds
+        if args.p2_seeds is not None:
+            config.p2_seeds = args.p2_seeds
+        if args.penalty_seeds is not None:
+            config.penalty_seeds = args.penalty_seeds
+        if args.scaling_seeds is not None:
+            config.scaling_seeds = args.scaling_seeds
+        if args.shots is not None:
+            config.shots = args.shots
+        if args.restarts is not None:
+            config.restarts = args.restarts
+        if args.maxiter is not None:
+            config.maxiter = args.maxiter
+
+        df_runs = run_benchmark(config, out_dir, resume=args.resume)
+        generate_all_plots(df_runs, out_dir)
+
+        print(f"saved benchmark runs to {out_dir / 'benchmark_runs.csv'}")
+        print(f"saved summary table to {out_dir / 'benchmark_summary.csv'}")
+        print(f"saved summary markdown to {out_dir / 'benchmark_summary.md'}")
+        print(f"saved metadata to {out_dir / 'benchmark_meta.json'}")
+        print(f"saved figures to {out_dir}")
+        print()
+        summary_md = (out_dir / "benchmark_summary.md").read_text(encoding="utf-8")
+        print(summary_md)
 
 
 if __name__ == "__main__":

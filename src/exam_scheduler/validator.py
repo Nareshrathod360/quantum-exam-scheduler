@@ -56,21 +56,24 @@ def validate_schedule(
     assigned_slots = {s for s in assignment if s is not None}
     slots_used = len(assigned_slots)
 
-    # Detect conflicts between courses that share students
-    graph = build_conflict_graph(instance)
+    # Detect conflicts between courses that share students via cached shared_students()
+    S = instance.shared_students()
     conflicts: List[Tuple[int, int, int, int]] = []
-    for i, j in conflict_edges(graph):
-        slot_i = assignment[i]
-        slot_j = assignment[j]
-        if slot_i is not None and slot_j is not None and slot_i == slot_j:
-            shared = graph.edges[i, j]["shared"]
-            conflicts.append((i, j, slot_i, shared))
-            code_i = instance.course_codes[i]
-            code_j = instance.course_codes[j]
-            messages.append(
-                f"conflict between course {i} ({code_i}) and course {j} ({code_j}) "
-                f"at slot {slot_i} (shared={shared})"
-            )
+    n = instance.n_courses
+    for i in range(n):
+        for j in range(i + 1, n):
+            shared = int(S[i, j])
+            if shared > 0:
+                slot_i = assignment[i]
+                slot_j = assignment[j]
+                if slot_i is not None and slot_j is not None and slot_i == slot_j:
+                    conflicts.append((i, j, slot_i, shared))
+                    code_i = instance.course_codes[i]
+                    code_j = instance.course_codes[j]
+                    messages.append(
+                        f"conflict between course {i} ({code_i}) and course {j} ({code_j}) "
+                        f"at slot {slot_i} (shared={shared})"
+                    )
 
     n_conflicts = len(conflicts)
 

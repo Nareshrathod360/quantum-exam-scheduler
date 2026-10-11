@@ -186,6 +186,7 @@ def bitstring_to_bits(bitstring: str) -> List[int]:
 def valid_state_mask(instance: ExamInstance, n_slots: int) -> np.ndarray:
     """Compute boolean mask of length 2^N where mask[s] is True iff state s is a valid schedule.
 
+    Cached per (instance, n_slots) inside instance._cache.
     Enumerates the K^n one-hot assignments, validates each, and maps valid schedules
     to their computational basis state indices via index = sum(bit_q << q).
     """
@@ -195,15 +196,20 @@ def valid_state_mask(instance: ExamInstance, n_slots: int) -> np.ndarray:
             f"N={N} qubits exceeds 20 (too large for 2^N state mask allocation)."
         )
 
-    mask = np.zeros(1 << N, dtype=bool)
-    model = build_qubo(instance, n_slots)
+    cache_key = ("valid_state_mask", n_slots)
+    if cache_key not in instance._cache:
+        mask = np.zeros(1 << N, dtype=bool)
+        model = build_qubo(instance, n_slots)
 
-    for a in itertools.product(range(n_slots), repeat=instance.n_courses):
-        val = validate_schedule(instance, list(a), n_slots)
-        if val.is_valid:
-            bits = bits_from_assignment(model, list(a))
-            idx = sum(bit << q for q, bit in enumerate(bits))
-            mask[idx] = True
+        for a in itertools.product(range(n_slots), repeat=instance.n_courses):
+            val = validate_schedule(instance, list(a), n_slots)
+            if val.is_valid:
+                bits = bits_from_assignment(model, list(a))
+                idx = sum(bit << q for q, bit in enumerate(bits))
+                mask[idx] = True
 
-    return mask
+        mask.flags.writeable = False
+        instance._cache[cache_key] = mask
+
+    return instance._cache[cache_key]
 

@@ -1,6 +1,6 @@
 """Data handling and problem instance generation for exam scheduling."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Tuple
 import numpy as np
@@ -16,6 +16,7 @@ class ExamInstance:
     course_codes: Tuple[str, ...]
     course_titles: Tuple[str, ...]
     enrollments: pd.DataFrame
+    _cache: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Validate instance integrity."""
@@ -56,37 +57,51 @@ class ExamInstance:
         return int(self.enrollments["student_id"].nunique())
 
     def incidence_matrix(self) -> np.ndarray:
-        """Compute 0/1 binary incidence matrix (students x courses)."""
-        unique_students = sorted(self.enrollments["student_id"].unique())
-        student_map = {sid: i for i, sid in enumerate(unique_students)}
-        course_map = {code: i for i, code in enumerate(self.course_codes)}
+        """Compute 0/1 binary incidence matrix (students x courses), cached and read-only."""
+        if "incidence_matrix" not in self._cache:
+            unique_students = sorted(self.enrollments["student_id"].unique())
+            student_map = {sid: i for i, sid in enumerate(unique_students)}
+            course_map = {code: i for i, code in enumerate(self.course_codes)}
 
-        M = np.zeros((len(unique_students), self.n_courses), dtype=int)
-        for _, row in self.enrollments.iterrows():
-            s_idx = student_map[row["student_id"]]
-            c_idx = course_map[row["course_code"]]
-            M[s_idx, c_idx] = 1
-        return M
+            M = np.zeros((len(unique_students), self.n_courses), dtype=int)
+            s_indices = self.enrollments["student_id"].map(student_map).values
+            c_indices = self.enrollments["course_code"].map(course_map).values
+            M[s_indices, c_indices] = 1
+            M.flags.writeable = False
+            self._cache["incidence_matrix"] = M
+        return self._cache["incidence_matrix"]
 
     def enrollment_counts(self) -> np.ndarray:
-        """Return 1D numpy array of student counts for each course."""
-        M = self.incidence_matrix()
-        return M.sum(axis=0)
+        """Return 1D numpy array of student counts for each course, cached and read-only."""
+        if "enrollment_counts" not in self._cache:
+            M = self.incidence_matrix()
+            counts = M.sum(axis=0)
+            counts.flags.writeable = False
+            self._cache["enrollment_counts"] = counts
+        return self._cache["enrollment_counts"]
 
     def shared_students(self) -> np.ndarray:
-        """Compute symmetric matrix of shared student counts with zero diagonal."""
-        M = self.incidence_matrix()
-        S = M.T @ M
-        np.fill_diagonal(S, 0)
-        return S
+        """Compute symmetric matrix of shared student counts with zero diagonal, cached and read-only."""
+        if "shared_students" not in self._cache:
+            M = self.incidence_matrix()
+            S = M.T @ M
+            np.fill_diagonal(S, 0)
+            S.flags.writeable = False
+            self._cache["shared_students"] = S
+        return self._cache["shared_students"]
 
     def weights(self) -> np.ndarray:
-        """Compute normalized course enrollment weights (relative to maximum enrollment)."""
-        counts = self.enrollment_counts()
-        max_c = counts.max()
-        if max_c == 0:
-            return np.zeros_like(counts, dtype=float)
-        return counts / max_c
+        """Compute normalized course enrollment weights, cached and read-only."""
+        if "weights" not in self._cache:
+            counts = self.enrollment_counts()
+            max_c = counts.max()
+            if max_c == 0:
+                w = np.zeros_like(counts, dtype=float)
+            else:
+                w = counts / max_c
+            w.flags.writeable = False
+            self._cache["weights"] = w
+        return self._cache["weights"]
 
     def course_table(self) -> pd.DataFrame:
         """Return DataFrame summary table of courses and statistics."""

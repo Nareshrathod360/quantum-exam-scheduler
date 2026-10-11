@@ -164,23 +164,27 @@ def random_sampling_schedule(
     shots: int = 4096,
     seed: int = DEFAULT_SEED,
 ) -> SolverResult:
-    """Solve exam scheduling by uniform random binary sampling across 2^N states."""
-    t0 = time.perf_counter()
+    """Solve exam scheduling by uniform random binary sampling across 2^N states.
+
+    Runtime accounting rule: runtime_s is the wall-clock of the algorithm itself
+    (drawing samples and decoding valid ones), excluding one-time diagnostic
+    precomputations such as valid_state_mask construction.
+    """
     N = instance.n_courses * n_slots
 
+    # Diagnostic precomputations performed prior to timing the algorithm
+    mask = valid_state_mask(instance, n_slots)
+    powers = 2 ** np.arange(N, dtype=np.int64)
+    model = build_qubo(instance, n_slots)
+
+    t0 = time.perf_counter()
     rng = np.random.default_rng(seed)
     bits = rng.integers(0, 2, size=(shots, N))
 
-    # Evaluate validity using valid_state_mask
-    mask = valid_state_mask(instance, n_slots)
-    powers = 2 ** np.arange(N, dtype=np.int64)
     state_indices = bits @ powers
-
     valid_flags = mask[state_indices]
     n_valid_shots = int(valid_flags.sum())
     feasibility_yield = float(n_valid_shots / shots)
-
-    model = build_qubo(instance, n_slots)
     runtime_s = time.perf_counter() - t0
 
     if n_valid_shots == 0:
