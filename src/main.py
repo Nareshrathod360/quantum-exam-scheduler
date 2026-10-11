@@ -34,10 +34,11 @@ from exam_scheduler.conflict_graph import (
     conflict_edges,
     draw_conflict_graph,
 )
-from exam_scheduler.benchmark import BenchmarkConfig, run_benchmark
+from exam_scheduler.benchmark import BenchmarkConfig, run_benchmark, write_reports
 from exam_scheduler.data import load_instance, sample_instance, save_instance
 from exam_scheduler.ising import ising_energies_all, qubo_to_ising
 from exam_scheduler.plots import generate_all_plots
+import pandas as pd
 from exam_scheduler.qaoa_solver import qaoa_schedule
 from exam_scheduler.qubo import build_qubo, decode_bits, qubo_energies_all
 from exam_scheduler.validator import validate_schedule
@@ -163,7 +164,19 @@ def main() -> None:
     bench_cmd.add_argument("--restarts", type=int, default=None, help="Number of optimizer restarts")
     bench_cmd.add_argument("--maxiter", type=int, default=None, help="Optimizer max iterations")
 
+    report_cmd = subparsers.add_parser(
+        "benchmark-report",
+        help="Regenerate summary table and figures from existing benchmark runs",
+    )
+    report_cmd.add_argument(
+        "--out",
+        type=str,
+        default="results",
+        help="Directory containing benchmark_runs.csv (default: results)",
+    )
+
     args = parser.parse_args()
+
 
     if args.command == "make-sample-data":
         inst = sample_instance()
@@ -496,6 +509,27 @@ def main() -> None:
         summary_md = (out_dir / "benchmark_summary.md").read_text(encoding="utf-8")
         print(summary_md)
 
+    elif args.command == "benchmark-report":
+        out_dir = Path(args.out)
+        if not out_dir.is_absolute():
+            out_dir = REPO_ROOT / out_dir
+
+        runs_csv = out_dir / "benchmark_runs.csv"
+        if not runs_csv.exists():
+            print(f"Error: {runs_csv} not found. Run benchmark first.")
+            sys.exit(1)
+
+        df_runs = pd.read_csv(runs_csv)
+        write_reports(df_runs, out_dir)
+
+        print(f"saved summary table to {out_dir / 'benchmark_summary.csv'}")
+        print(f"saved summary markdown to {out_dir / 'benchmark_summary.md'}")
+        print(f"saved figures to {out_dir}")
+        print()
+        summary_md = (out_dir / "benchmark_summary.md").read_text(encoding="utf-8")
+        print(summary_md)
+
 
 if __name__ == "__main__":
     main()
+

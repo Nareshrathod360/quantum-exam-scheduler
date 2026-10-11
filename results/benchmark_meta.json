@@ -1,0 +1,60 @@
+{
+  "config": {
+    "n_slots": 3,
+    "random_seeds": 20,
+    "p1_seeds": 10,
+    "p2_seeds": 3,
+    "penalty_seeds": 3,
+    "scaling_seeds": 3,
+    "shots": 4096,
+    "restarts": 3,
+    "maxiter": 150,
+    "penalty": 1.5,
+    "penalties": [
+      1.0,
+      1.1,
+      1.5,
+      2.0,
+      3.0
+    ],
+    "scaling_sizes": [
+      3,
+      4,
+      5
+    ],
+    "include_p2": true,
+    "base_seed": 42
+  },
+  "python_version": "3.13.5",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "qiskit": "2.5.2",
+  "qiskit_aer": "0.17.2",
+  "numpy": "2.5.3",
+  "scipy": "1.18.1",
+  "networkx": "3.7",
+  "pandas": "3.0.6",
+  "timestamp_utc": "2026-10-11T06:27:50.903734+00:00",
+  "seeds_used": [
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61
+  ],
+  "disclaimer": "No quantum advantage is claimed; all quantum runs are noiseless classical simulations."
+}

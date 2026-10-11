@@ -17,6 +17,7 @@ import scipy
 from exam_scheduler.classical import exact_schedule, greedy_schedule, random_sampling_schedule
 from exam_scheduler.data import DEFAULT_SEED, ExamInstance, ring_instance, sample_instance
 from exam_scheduler.qaoa_solver import qaoa_schedule
+from exam_scheduler.plots import generate_all_plots
 from exam_scheduler.qubo import build_qubo, qubo_energies_all, valid_state_mask
 from exam_scheduler.results import optimality_gap
 
@@ -117,6 +118,24 @@ def _dataframe_to_markdown(df: pd.DataFrame) -> str:
         for row in rows
     ]
     return "\n".join([header_line, separator_line] + data_lines)
+
+
+def _format_sig_figs(val: float, n: int = 3) -> str:
+    """Format float to n significant digits without scientific notation where possible."""
+    if pd.isna(val):
+        return "-"
+    if val == 0:
+        return "0"
+    import math
+    mag = math.floor(math.log10(abs(val)))
+    decimals = n - 1 - mag
+    if decimals > 0:
+        return f"{val:.{decimals}f}"
+    else:
+        return f"{round(val, decimals):.0f}"
+
+
+
 
 
 
@@ -282,7 +301,7 @@ def run_benchmark(
                 "objective": res.objective,
                 "optimal_objective": opt_obj,
                 "optimality_gap": optimality_gap(res.objective, opt_obj) if res.is_valid else np.nan,
-                "feasibility_yield": 1.0 if res.is_valid else 0.0,
+                "feasibility_yield": np.nan,
                 "n_valid_shots": np.nan,
                 "exact_feasible_probability": np.nan,
                 "random_guess_probability": np.nan,
@@ -318,7 +337,7 @@ def run_benchmark(
                 "objective": res.objective,
                 "optimal_objective": opt_obj,
                 "optimality_gap": optimality_gap(res.objective, opt_obj) if res.is_valid else np.nan,
-                "feasibility_yield": 1.0 if res.is_valid else 0.0,
+                "feasibility_yield": np.nan,
                 "n_valid_shots": np.nan,
                 "exact_feasible_probability": np.nan,
                 "random_guess_probability": np.nan,
@@ -444,80 +463,10 @@ def run_benchmark(
         )
 
     # -------------------------------------------------------------------------
-    # Summary Table Generation
+    # Generate Reports and Save Metadata
     # -------------------------------------------------------------------------
-    summary_rows: List[Dict[str, Any]] = []
-    group_cols = ["experiment", "instance", "method", "reps", "penalty"]
+    write_reports(df_runs, out_path)
 
-    for keys, group in df_runs.groupby(group_cols, dropna=False):
-        exp, inst_name, meth, reps_val, pen_val = keys
-        valid_subset = group[group["is_valid"] == True]
-
-        runs_count = len(group)
-        valid_run_rate = float((group["is_valid"] == True).mean())
-        mean_yield = float(group["feasibility_yield"].mean()) if group["feasibility_yield"].notna().any() else np.nan
-        med_yield = float(group["feasibility_yield"].median()) if group["feasibility_yield"].notna().any() else np.nan
-
-        # Optimum found rate: objective matches optimal_objective within 1e-9
-        opt_matches = group.apply(
-            lambda r: r["is_valid"] and abs(r["objective"] - r["optimal_objective"]) <= 1e-9,
-            axis=1,
-        )
-        opt_found_rate = float(opt_matches.mean())
-
-        mean_gap = float(valid_subset["optimality_gap"].mean()) if not valid_subset.empty else np.nan
-        mean_slots = float(valid_subset["slots_used"].mean()) if not valid_subset.empty else np.nan
-        med_rt = float(group["runtime_s"].median())
-        min_rt = float(group["runtime_s"].min())
-        max_rt = float(group["runtime_s"].max())
-
-        summary_rows.append({
-            "experiment": exp,
-            "instance": inst_name,
-            "method": meth,
-            "reps": reps_val,
-            "penalty": pen_val,
-            "runs": runs_count,
-            "valid_run_rate": valid_run_rate,
-            "mean_feasibility_yield": mean_yield,
-            "median_feasibility_yield": med_yield,
-            "optimum_found_rate": opt_found_rate,
-            "mean_optimality_gap": mean_gap,
-            "mean_slots_used": mean_slots,
-            "median_runtime_s": med_rt,
-            "min_runtime_s": min_rt,
-            "max_runtime_s": max_rt,
-        })
-
-    summary_df = pd.DataFrame(summary_rows)
-    summary_csv = out_path / "benchmark_summary.csv"
-    summary_df.to_csv(summary_csv, index=False)
-
-    # -------------------------------------------------------------------------
-    # Markdown Summary File
-    # -------------------------------------------------------------------------
-    headline_mask = valid_state_mask(headline_instance, config.n_slots)
-    f_count = int(headline_mask.sum())
-    n_head_vars = headline_instance.n_courses * config.n_slots
-    total_states = 1 << n_head_vars
-    pct_rand = (f_count / total_states) * 100.0
-
-    md_lines = [
-        "# Quantum Exam Scheduler Benchmark Summary",
-        "",
-        f"**Random-guess feasibility = {f_count}/{total_states} ({pct_rand:.4f}%)**",
-        "",
-        "## Performance Comparison Table",
-        "",
-        _dataframe_to_markdown(summary_df),
-        "",
-    ]
-    summary_md_path = out_path / "benchmark_summary.md"
-    summary_md_path.write_text("\n".join(md_lines), encoding="utf-8")
-
-    # -------------------------------------------------------------------------
-    # Metadata File
-    # -------------------------------------------------------------------------
     meta_info = {
         "config": asdict(config),
         "python_version": platform.python_version(),
@@ -536,3 +485,164 @@ def run_benchmark(
     meta_path.write_text(json.dumps(meta_info, indent=2), encoding="utf-8")
 
     return df_runs
+
+
+def write_reports(df: pd.DataFrame, out_dir: Any) -> pd.DataFrame:
+    """Write benchmark_summary.csv, benchmark_summary.md, and all 4 figures from a runs DataFrame."""
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    summary_rows: List[Dict[str, Any]] = []
+    group_cols = ["experiment", "instance", "method", "reps", "penalty"]
+
+    for keys, group in df.groupby(group_cols, dropna=False):
+        exp, inst_name, meth, reps_val, pen_val = keys
+        valid_subset = group[group["is_valid"] == True]
+
+        runs_count = len(group)
+        n_valid_runs = int((group["is_valid"] == True).sum())
+        valid_run_rate = float((group["is_valid"] == True).mean())
+
+        # Feasibility yield only applies to sampling methods (random-sampling, qaoa-*)
+        meth_str = str(meth)
+        is_det = (
+            meth_str in ("exact", "greedy-largest_first", "greedy-DSATUR")
+            or meth_str.startswith("greedy-")
+            or meth_str == "exact"
+        )
+        if is_det:
+            mean_yield = np.nan
+            med_yield = np.nan
+        else:
+            mean_yield = float(group["feasibility_yield"].mean()) if group["feasibility_yield"].notna().any() else np.nan
+            med_yield = float(group["feasibility_yield"].median()) if group["feasibility_yield"].notna().any() else np.nan
+
+        # Optimum found rate: objective matches optimal_objective within 1e-9
+        opt_matches = group.apply(
+            lambda r: bool(r["is_valid"]) and pd.notna(r["optimal_objective"]) and pd.notna(r["objective"]) and abs(r["objective"] - r["optimal_objective"]) <= 1e-9,
+            axis=1,
+        )
+        opt_found_rate = float(opt_matches.mean())
+
+        mean_gap = float(valid_subset["optimality_gap"].mean()) if not valid_subset.empty and valid_subset["optimality_gap"].notna().any() else np.nan
+        mean_slots = float(valid_subset["slots_used"].mean()) if not valid_subset.empty and valid_subset["slots_used"].notna().any() else np.nan
+        med_rt = float(group["runtime_s"].median())
+        min_rt = float(group["runtime_s"].min())
+        max_rt = float(group["runtime_s"].max())
+
+        summary_rows.append({
+            "experiment": exp,
+            "instance": inst_name,
+            "method": meth,
+            "reps": reps_val,
+            "penalty": pen_val,
+            "runs": runs_count,
+            "n_valid_runs": n_valid_runs,
+            "valid_run_rate": valid_run_rate,
+            "mean_feasibility_yield": mean_yield,
+            "median_feasibility_yield": med_yield,
+            "optimum_found_rate": opt_found_rate,
+            "mean_optimality_gap": mean_gap,
+            "mean_slots_used": mean_slots,
+            "median_runtime_s": med_rt,
+            "min_runtime_s": min_rt,
+            "max_runtime_s": max_rt,
+        })
+
+    summary_df = pd.DataFrame(summary_rows)
+    summary_csv = out_path / "benchmark_summary.csv"
+    summary_df.to_csv(summary_csv, index=False)
+
+    # -------------------------------------------------------------------------
+    # Format Display DataFrame for Markdown Table
+    # -------------------------------------------------------------------------
+    disp = pd.DataFrame()
+    disp["experiment"] = summary_df["experiment"].astype(str)
+    disp["instance"] = summary_df["instance"].astype(str)
+    disp["method"] = summary_df["method"].astype(str)
+    disp["reps"] = summary_df["reps"].apply(lambda v: str(int(v)) if pd.notna(v) else "-")
+    disp["penalty"] = summary_df["penalty"].apply(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
+    disp["runs"] = summary_df["runs"].apply(lambda v: str(int(v)))
+    disp["n_valid_runs"] = summary_df["n_valid_runs"].apply(lambda v: str(int(v)))
+    disp["valid_run_rate"] = summary_df["valid_run_rate"].apply(lambda v: f"{v * 100:.1f}%" if pd.notna(v) else "-")
+    disp["mean_feasibility_yield"] = summary_df["mean_feasibility_yield"].apply(lambda v: f"{v * 100:.2f}%" if pd.notna(v) else "-")
+    disp["median_feasibility_yield"] = summary_df["median_feasibility_yield"].apply(lambda v: f"{v * 100:.2f}%" if pd.notna(v) else "-")
+    disp["optimum_found_rate"] = summary_df["optimum_found_rate"].apply(lambda v: f"{v * 100:.1f}%" if pd.notna(v) else "-")
+    disp["mean_optimality_gap"] = summary_df["mean_optimality_gap"].apply(lambda v: f"{v * 100:.1f}%" if pd.notna(v) else "-")
+    disp["mean_slots_used"] = summary_df["mean_slots_used"].apply(
+        lambda v: (f"{v:.1f}" if v == round(v, 1) else f"{v:.2f}") if pd.notna(v) else "-"
+    )
+    disp["median_runtime_s"] = summary_df["median_runtime_s"].apply(lambda v: _format_sig_figs(v, 3))
+    disp["min_runtime_s"] = summary_df["min_runtime_s"].apply(lambda v: _format_sig_figs(v, 3))
+    disp["max_runtime_s"] = summary_df["max_runtime_s"].apply(lambda v: _format_sig_figs(v, 3))
+
+    # Headline random guess
+    e1_rows = df[df["experiment"] == "E1_headline"]
+    if not e1_rows.empty:
+        inst_name = str(e1_rows["instance"].iloc[0])
+        k = int(e1_rows["n_slots"].iloc[0])
+        if inst_name == "sample":
+            h_inst = sample_instance()
+        elif inst_name.startswith("ring_"):
+            h_inst = ring_instance(int(inst_name.split("_")[1]), seed=42)
+        else:
+            h_inst = sample_instance()
+    else:
+        h_inst = sample_instance()
+        k = 3
+
+    h_mask = valid_state_mask(h_inst, k)
+    f_count = int(h_mask.sum())
+    n_vars = h_inst.n_courses * k
+    total_states = 1 << n_vars
+    pct_rand = (f_count / total_states) * 100.0
+
+    md_lines = [
+        "# Quantum Exam Scheduler Benchmark Summary",
+        "",
+        f"**Random-guess feasibility = {f_count}/{total_states} ({pct_rand:.4f}%)**",
+        "",
+        "## Performance Comparison Table",
+        "",
+        _dataframe_to_markdown(disp),
+        "",
+        "### Experiment Notes",
+        "- **E1 (Headline):** Compares exact search, greedy heuristics, classical random sampling, and QAOA on the benchmark problem to evaluate solution quality and feasibility yield.",
+        "- **E2 (Penalty sweep):** Analyzes how the QUBO constraint penalty parameter affects ground-state validity and QAOA sampling success.",
+        "- **E3 (Scaling):** Assesses solver feasibility yield and runtime scaling as the number of courses (qubit count) increases.",
+    ]
+
+    # E3 random guess probabilities
+    e3_rows = df[df["experiment"] == "E3_scaling"]
+    if not e3_rows.empty:
+        md_lines.append("")
+        md_lines.append("### Random-Guess Feasibility by Problem Size (E3)")
+        seen_sizes = set()
+        for _, row in e3_rows.iterrows():
+            size_key = (str(row["instance"]), int(row["n_courses"]), int(row["n_slots"]))
+            if size_key in seen_sizes:
+                continue
+            seen_sizes.add(size_key)
+            i_name, n_c, n_s = size_key
+            if i_name.startswith("ring_"):
+                s_inst = ring_instance(int(i_name.split("_")[1]), seed=42)
+            elif i_name == "sample":
+                s_inst = sample_instance()
+            else:
+                s_inst = ring_instance(n_c, seed=42)
+            mask_s = valid_state_mask(s_inst, n_s)
+            c_s = int(mask_s.sum())
+            q_s = s_inst.n_courses * n_s
+            t_s = 1 << q_s
+            p_s = (c_s / t_s) * 100.0
+            md_lines.append(f"- **{i_name}** ({n_c} courses, {n_s} slots, {q_s} qubits): {c_s}/{t_s} ({p_s:.4f}%)")
+
+    md_lines.append("")
+    summary_md_path = out_path / "benchmark_summary.md"
+    summary_md_path.write_text("\n".join(md_lines), encoding="utf-8")
+
+    # Generate all four figures
+    generate_all_plots(df, out_path)
+
+    return summary_df
+
