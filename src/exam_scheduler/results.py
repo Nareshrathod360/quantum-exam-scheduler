@@ -78,3 +78,16 @@ def make_result(
         runtime_s=runtime_s,
         extra=extra_dict,
     )
+
+
+def optimality_gap(
+    value: Optional[float], optimum: Optional[float]
+) -> Optional[float]:
+    """Compute relative optimality gap: (value - optimum) / optimum.
+
+    Returns None if value is None, optimum is None, or optimum == 0.
+    """
+    if value is None or optimum is None or optimum == 0:
+        return None
+    return float((value - optimum) / optimum)
+
