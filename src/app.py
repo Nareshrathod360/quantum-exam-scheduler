@@ -239,7 +239,7 @@ with tab_data:
     col3.metric("Total Enrollments", len(instance.enrollments))
 
     st.subheader("Course Directory")
-    st.dataframe(instance.course_table(), use_container_width=True)
+    st.dataframe(instance.course_table(), width="stretch")
 
     st.subheader("Shared-Students Conflict Matrix")
     shared_mat = instance.shared_students()
@@ -299,7 +299,7 @@ with tab_results:
 
         runs_df = runs_to_dataframe(results, optimum=optimum)
         st.subheader("Performance Comparison")
-        st.dataframe(runs_df, use_container_width=True)
+        st.dataframe(runs_df, width="stretch")
 
         if optimum is None:
             st.caption("Optimum unknown ('-'). Include 'Exact search' among algorithms to compute exact optimality gaps.")
@@ -314,11 +314,11 @@ with tab_results:
             if res_sel.is_valid and res_sel.assignment is not None:
                 st.success(f"Schedule for {inspect_method} is VALID (Objective: {res_sel.objective:.4f})")
                 tt_df = timetable_dataframe(instance, res_sel.assignment, n_slots)
-                st.dataframe(tt_df, use_container_width=True)
+                st.dataframe(tt_df, width="stretch")
 
                 ct = instance.course_table().copy()
                 ct["Assigned Slot"] = [res_sel.assignment[c] for c in range(instance.n_courses)]
-                st.dataframe(ct, use_container_width=True)
+                st.dataframe(ct, width="stretch")
             else:
                 st.error(f"Schedule for {inspect_method} is INVALID")
                 messages = res_sel.extra.get("messages", []) if res_sel.extra else []
@@ -364,7 +364,7 @@ with tab_qaoa:
         # Top bitstrings table and stacked bar chart
         st.subheader("Top Measured Bitstrings")
         top_df = top_counts_dataframe(instance, n_slots, q_outcome.counts, top=15)
-        st.dataframe(top_df, use_container_width=True)
+        st.dataframe(top_df, width="stretch")
 
         bar_chart_data = pd.DataFrame({
             "Bitstring": top_df["bitstring"],
@@ -404,7 +404,7 @@ with tab_bench:
 
     if bench_data["summary"] is not None:
         st.subheader("Benchmark Summary Table")
-        st.dataframe(bench_data["summary"], use_container_width=True)
+        st.dataframe(bench_data["summary"], width="stretch")
 
         if bench_data["figures"]:
             st.subheader("Benchmark Visualizations")
